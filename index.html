@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌭 Registro de Completos</title>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+    import { getDatabase, ref, push, onValue, update, remove } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
+
+    // ═══════════════════════════════════════════════
+    // 🔧 CONFIGURACIÓN FIREBASE — reemplaza con los
+    //    datos de tu proyecto en Firebase Console
+    // ═══════════════════════════════════════════════
+    const firebaseConfig = {
+      apiKey: "TU_API_KEY",
+      authDomain: "TU_PROJECT.firebaseapp.com",
+      databaseURL: "https://TU_PROJECT-default-rtdb.firebaseio.com",
+      projectId: "TU_PROJECT_ID",
+      storageBucket: "TU_PROJECT.appspot.com",
+      messagingSenderId: "TU_SENDER_ID",
+      appId: "TU_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const ventasRef = ref(db, "ventas");
+
+    const PRECIO_UNIDAD = 2500;
+    const LIMITE_UNIDADES = 250;
+
+    let ventas = {};
+    let totalVendidas = 0;
+
+    // ─── Escuchar cambios en tiempo real ───
+    onValue(ventasRef, (snapshot) => {
+      ventas = snapshot.val() || {};
+      renderTabla();
+      actualizarResumen();
+    });
+
+    // ─── Guardar venta ───
+    window.guardarVenta = function () {
+      const nombre    = document.getElementById("nombre").value.trim();
+      const cantidad  = parseInt(document.getElementById("cantidad").value);
+      const estado    = document.getElementById("estado").value;
+      const metodo    = document.getElementById("metodo").value;
+
+      if (!nombre) return mostrarError("Ingresa el nombre del cliente.");
+      if (!cantidad || cantidad < 1) return mostrarError("Ingresa una cantidad válida.");
+      if (totalVendidas + cantidad > LIMITE_UNIDADES)
+        return mostrarError(`Solo quedan ${LIMITE_UNIDADES - totalVendidas} unidades disponibles.`);
+
+      const venta = {
+        nombre,
+        cantidad,
+        total: cantidad * PRECIO_UNIDAD,
+        estado,
+        metodo: estado === "pagado" ? metodo : null,
+        timestamp: Date.now()
+      };
+
+      push(ventasRef, venta);
+      limpiarFormulario();
+    };
+
+    // ─── Marcar como pagado ───
+    window.marcarPagado = function (id) {
+      const metodo = prompt("¿Cómo pagó?\n1 → Efectivo\n2 → Transferencia");
+      if (!metodo) return;
+      const metodoTexto = metodo.trim() === "1" ? "efectivo" : metodo.trim() === "2" ? "transferencia" : null;
+      if (!metodoTexto) return alert("Opción no válida.");
+      update(ref(db, `ventas/${id}`), { estado: "pagado", metodo: metodoTexto });
+    };
+
+    // ─── Eliminar venta ───
+    window.eliminarVenta = function (id) {
+      if (confirm("¿Eliminar este registro?")) {
+        remove(ref(db, `ventas/${id}`));
+      }
+    };
+
+    // ─── Render tabla ───
+    function renderTabla() {
+      const tbody = document.getElementById("tabla-body");
+      const filtro = document.getElementById("filtro").value;
+
+      const lista = Object.entries(ventas)
+        .sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+      const filtradas = filtro === "todos" ? lista
+        : lista.filter(([, v]) => v.estado === filtro);
+
+      if (filtradas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty">Sin registros aún 🌭</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtradas.map(([id, v]) => {
+        const estadoBadge = v.estado === "pagado"
+          ? `<span class="badge pagado">${v.metodo === "efectivo" ? "💵 Efectivo" : "📲 Transfer."}</span>`
+          : `<span class="badge pendiente">⏳ Pendiente</span>`;
+
+        const acciones = v.estado === "pendiente"
+          ? `<button class="btn-sm btn-pagar" onclick="marcarPagado('${id}')">Cobrar</button>
+             <button class="btn-sm btn-del" onclick="eliminarVenta('${id}')">✕</button>`
+          : `<button class="btn-sm btn-del" onclick="eliminarVenta('${id}')">✕</button>`;
+
+        return `
+          <tr>
+            <td class="td-nombre">${escapeHtml(v.nombre)}</td>
+            <td class="td-num">${v.cantidad}</td>
+            <td class="td-num">$${v.total.toLocaleString("es-CL")}</td>
+            <td>${estadoBadge}</td>
+            <td class="td-fecha">${formatFecha(v.timestamp)}</td>
+            <td class="td-acc">${acciones}</td>
+          </tr>`;
+      }).join("");
+    }
+
+    // ─── Actualizar resumen y barra ───
+    function actualizarResumen() {
+      const lista = Object.values(ventas);
+      totalVendidas = lista.reduce((s, v) => s + v.cantidad, 0);
+      const pendientesCount = lista.filter(v => v.estado === "pendiente").reduce((s, v) => s + v.cantidad, 0);
+      const cobradoEfectivo = lista.filter(v => v.metodo === "efectivo").reduce((s, v) => s + v.total, 0);
+      const cobradoTransfer = lista.filter(v => v.metodo === "transferencia").reduce((s, v) => s + v.total, 0);
+      const totalCobrado = cobradoEfectivo + cobradoTransfer;
+      const totalPendiente = lista.filter(v => v.estado === "pendiente").reduce((s, v) => s + v.total, 0);
+      const restantes = LIMITE_UNIDADES - totalVendidas;
+
+      // Barra progreso
+      const pct = Math.min((totalVendidas / LIMITE_UNIDADES) * 100, 100);
+      document.getElementById("barra-fill").style.width = pct + "%";
+      document.getElementById("barra-label").textContent =
+        `${totalVendidas} / ${LIMITE_UNIDADES} unidades vendidas`;
+      document.getElementById("restantes").textContent =
+        restantes > 0 ? `Quedan ${restantes} disponibles` : "¡Cupo agotado!";
+      document.getElementById("restantes").style.color = restantes <= 20 ? "var(--rojo)" : "var(--verde)";
+
+      // Tarjetas
+      setText("res-vendidas", totalVendidas);
+      setText("res-cobrado", "$" + totalCobrado.toLocaleString("es-CL"));
+      setText("res-efectivo", "$" + cobradoEfectivo.toLocaleString("es-CL"));
+      setText("res-transfer", "$" + cobradoTransfer.toLocaleString("es-CL"));
+      setText("res-pendiente", "$" + totalPendiente.toLocaleString("es-CL"));
+      setText("res-pendiente-u", pendientesCount + " u.");
+    }
+
+    // ─── Helpers ───
+    function limpiarFormulario() {
+      document.getElementById("nombre").value = "";
+      document.getElementById("cantidad").value = "";
+      document.getElementById("estado").value = "pendiente";
+      document.getElementById("metodo-grupo").style.display = "none";
+      document.getElementById("nombre").focus();
+    }
+
+    function mostrarError(msg) {
+      const el = document.getElementById("error");
+      el.textContent = msg;
+      el.style.display = "block";
+      setTimeout(() => el.style.display = "none", 3000);
+    }
+
+    function setText(id, val) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
+    function formatFecha(ts) {
+      const d = new Date(ts);
+      return d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    // ─── Estado → mostrar/ocultar método de pago ───
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("estado").addEventListener("change", function () {
+        document.getElementById("metodo-grupo").style.display =
+          this.value === "pagado" ? "block" : "none";
+      });
+
+      document.getElementById("filtro").addEventListener("change", () => {
+        renderTabla();
+      });
+
+      document.getElementById("cantidad").addEventListener("input", function () {
+        const c = parseInt(this.value) || 0;
+        document.getElementById("preview-total").textContent =
+          c > 0 ? `= $${(c * PRECIO_UNIDAD).toLocaleString("es-CL")}` : "";
+      });
+    });
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg:       #111118;
+      --surface:  #1c1c28;
+      --surface2: #252535;
+      --border:   #2e2e42;
+      --mostaza:  #f5c518;
+      --mostaza2: #c9a010;
+      --verde:    #3ecf8e;
+      --rojo:     #f87171;
+      --azul:     #60a5fa;
+      --texto:    #e8e8f0;
+      --muted:    #8888aa;
+      --radius:   10px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--texto);
+      font-family: "Inter", sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo { font-size: 2rem; }
+
+    header h1 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--mostaza);
+      letter-spacing: -0.02em;
+    }
+
+    header p { color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
+
+    /* ── Layout ── */
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px 60px;
+      display: grid;
+      gap: 20px;
+    }
+
+    /* ── Barra de progreso ── */
+    .barra-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+
+    .barra-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 10px;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    #barra-label { font-weight: 600; font-size: 0.95rem; color: var(--mostaza); }
+    #restantes   { font-size: 0.8rem; color: var(--verde); }
+
+    .barra-track {
+      background: var(--surface2);
+      border-radius: 99px;
+      height: 18px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      position: relative;
+    }
+
+    .barra-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--mostaza2), var(--mostaza));
+      border-radius: 99px;
+      transition: width 0.5s ease;
+      position: relative;
+    }
+
+    .barra-fill::after {
+      content: "🌭";
+      position: absolute;
+      right: -2px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 14px;
+    }
+
+    /* ── Tarjetas resumen ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .card-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .card-value {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--texto);
+    }
+
+    .card-sub {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .card.verde .card-value { color: var(--verde); }
+    .card.rojo  .card-value { color: var(--rojo); }
+    .card.mostaza .card-value { color: var(--mostaza); }
+
+    /* ── Formulario ── */
+    .form-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .form-card h2 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--mostaza);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 12px;
+      align-items: end;
+    }
+
+    @media (max-width: 700px) {
+      .form-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    .field { display: flex; flex-direction: column; gap: 5px; }
+
+    label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    input, select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--texto);
+      font-family: "Inter", sans-serif;
+      font-size: 0.9rem;
+      padding: 9px 12px;
+      transition: border-color 0.2s;
+      outline: none;
+      width: 100%;
+    }
+
+    input:focus, select:focus { border-color: var(--mostaza); }
+
+    .preview-total {
+      font-size: 0.75rem;
+      color: var(--mostaza);
+      margin-top: 4px;
+      min-height: 16px;
+    }
+
+    #metodo-grupo { margin-top: 12px; max-width: 220px; }
+
+    .btn-primary {
+      background: var(--mostaza);
+      color: #111;
+      border: none;
+      border-radius: 7px;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 700;
+      font-size: 0.9rem;
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .btn-primary:hover  { background: var(--mostaza2); }
+    .btn-primary:active { transform: scale(0.97); }
+
+    #error {
+      display: none;
+      background: rgba(248,113,113,0.15);
+      border: 1px solid var(--rojo);
+      color: var(--rojo);
+      border-radius: 7px;
+      padding: 9px 14px;
+      font-size: 0.85rem;
+      margin-top: 12px;
+    }
+
+    /* ── Tabla ── */
+    .tabla-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .tabla-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tabla-header h2 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--mostaza);
+    }
+
+    .filtro-group { display: flex; gap: 8px; align-items: center; }
+    .filtro-group label { text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
+    .filtro-group select { width: auto; padding: 6px 10px; font-size: 0.8rem; }
+
+    .tabla-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      background: var(--surface2);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 500;
+    }
+
+    tbody tr {
+      border-top: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+    td { padding: 10px 14px; vertical-align: middle; }
+
+    .td-num  { font-family: "Space Grotesk", sans-serif; font-weight: 600; text-align: right; }
+    .td-fecha { color: var(--muted); font-size: 0.8rem; }
+    .td-nombre { font-weight: 500; }
+    .td-acc   { text-align: right; white-space: nowrap; }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 32px;
+      font-size: 0.9rem;
+    }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      white-space: nowrap;
+    }
+
+    .badge.pagado    { background: rgba(62,207,142,0.15); color: var(--verde); }
+    .badge.pendiente { background: rgba(248,199,24,0.12); color: var(--mostaza); }
+
+    /* ── Botones tabla ── */
+    .btn-sm {
+      border: none;
+      border-radius: 5px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .btn-sm:hover { opacity: 0.8; }
+    .btn-pagar { background: var(--verde);  color: #111; margin-right: 4px; }
+    .btn-del   { background: rgba(248,113,113,0.2); color: var(--rojo); }
+
+    /* ── Footer ── */
+    footer {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      text-align: center;
+      padding: 8px;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🌭</div>
+  <div>
+    <h1>Registro de Completos</h1>
+    <p>Control de ventas · Límite 250 unidades · $2.500 c/u</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- Barra de progreso -->
+  <div class="barra-section">
+    <div class="barra-header">
+      <span id="barra-label">0 / 250 unidades vendidas</span>
+      <span id="restantes">Quedan 250 disponibles</span>
+    </div>
+    <div class="barra-track">
+      <div class="barra-fill" id="barra-fill"></div>
+    </div>
+  </div>
+
+  <!-- Resumen -->
+  <div class="cards">
+    <div class="card mostaza">
+      <div class="card-label">Total vendidos</div>
+      <div class="card-value" id="res-vendidas">0</div>
+      <div class="card-sub">unidades</div>
+    </div>
+    <div class="card verde">
+      <div class="card-label">Total cobrado</div>
+      <div class="card-value" id="res-cobrado">$0</div>
+      <div class="card-sub">
+        💵 <span id="res-efectivo">$0</span> &nbsp;|&nbsp; 📲 <span id="res-transfer">$0</span>
+      </div>
+    </div>
+    <div class="card rojo">
+      <div class="card-label">Por cobrar</div>
+      <div class="card-value" id="res-pendiente">$0</div>
+      <div class="card-sub"><span id="res-pendiente-u">0 u.</span> pendientes</div>
+    </div>
+  </div>
+
+  <!-- Formulario nueva venta -->
+  <div class="form-card">
+    <h2>+ Nueva venta</h2>
+    <div class="form-grid">
+      <div class="field">
+        <label for="nombre">Nombre del cliente</label>
+        <input id="nombre" type="text" placeholder="Ej: Juan Pérez" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="cantidad">Cantidad</label>
+        <input id="cantidad" type="number" min="1" max="250" placeholder="0" />
+        <div class="preview-total" id="preview-total"></div>
+      </div>
+      <div class="field">
+        <label for="estado">Estado de pago</label>
+        <select id="estado">
+          <option value="pendiente">⏳ Pendiente</option>
+          <option value="pagado">✅ Pagado</option>
+        </select>
+      </div>
+      <div class="field">
+        <button class="btn-primary" onclick="guardarVenta()">Registrar</button>
+      </div>
+    </div>
+
+    <div id="metodo-grupo" class="field" style="display:none">
+      <label for="metodo">Método de pago</label>
+      <select id="metodo">
+        <option value="efectivo">💵 Efectivo</option>
+        <option value="transferencia">📲 Transferencia</option>
+      </select>
+    </div>
+
+    <div id="error"></div>
+  </div>
+
+  <!-- Tabla de registros -->
+  <div class="tabla-section">
+    <div class="tabla-header">
+      <h2>Registros</h2>
+      <div class="filtro-group">
+        <label for="filtro">Ver:</label>
+        <select id="filtro">
+          <option value="todos">Todos</option>
+          <option value="pendiente">Pendientes</option>
+          <option value="pagado">Pagados</option>
+        </select>
+      </div>
+    </div>
+    <div class="tabla-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th style="text-align:right">Cant.</th>
+            <th style="text-align:right">Total</th>
+            <th>Estado</th>
+            <th>Hora</th>
+            <th style="text-align:right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tabla-body">
+          <tr><td colspan="6" class="empty">Sin registros aún 🌭</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  🌭 Completos · Registro en tiempo real · Firebase Realtime Database
+</footer>
+
+</body>
+</html>
