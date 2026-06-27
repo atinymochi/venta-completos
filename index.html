@@ -5,203 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>🌭 Registro de Completos</title>
 
-  <!-- Firebase -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-    import { getDatabase, ref, push, onValue, update, remove } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-database.js";
-
-    // Import the functions you need from the SDKs you need
-    import { initializeApp } from "firebase/app";
-    // TODO: Add SDKs for Firebase products that you want to use
-    // https://firebase.google.com/docs/web/setup#available-libraries
-    
-    // Your web app's Firebase configuration
-    const firebaseConfig = {
-      apiKey: "AIzaSyCottmzLVhIDNcha6P2WFxFcduXtsiF8ZI",
-      authDomain: "venta-completos-30250.firebaseapp.com",
-      databaseURL: "https://venta-completos-30250-default-rtdb.firebaseio.com",
-      projectId: "venta-completos-30250",
-      storageBucket: "venta-completos-30250.firebasestorage.app",
-      messagingSenderId: "768504039199",
-      appId: "1:768504039199:web:1bae0202850e582780522a"
-    };
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
-    const ventasRef = ref(db, "ventas");
-
-    const PRECIO_UNIDAD = 2500;
-    const LIMITE_UNIDADES = 250;
-
-    let ventas = {};
-    let totalVendidas = 0;
-
-    // ─── Escuchar cambios en tiempo real ───
-    onValue(ventasRef, (snapshot) => {
-      ventas = snapshot.val() || {};
-      renderTabla();
-      actualizarResumen();
-    });
-
-    // ─── Guardar venta ───
-    window.guardarVenta = function () {
-      const nombre    = document.getElementById("nombre").value.trim();
-      const cantidad  = parseInt(document.getElementById("cantidad").value);
-      const estado    = document.getElementById("estado").value;
-      const metodo    = document.getElementById("metodo").value;
-
-      if (!nombre) return mostrarError("Ingresa el nombre del cliente.");
-      if (!cantidad || cantidad < 1) return mostrarError("Ingresa una cantidad válida.");
-      if (totalVendidas + cantidad > LIMITE_UNIDADES)
-        return mostrarError(`Solo quedan ${LIMITE_UNIDADES - totalVendidas} unidades disponibles.`);
-
-      const venta = {
-        nombre,
-        cantidad,
-        total: cantidad * PRECIO_UNIDAD,
-        estado,
-        metodo: estado === "pagado" ? metodo : null,
-        timestamp: Date.now()
-      };
-
-      push(ventasRef, venta);
-      limpiarFormulario();
-    };
-
-    // ─── Marcar como pagado ───
-    window.marcarPagado = function (id) {
-      const metodo = prompt("¿Cómo pagó?\n1 → Efectivo\n2 → Transferencia");
-      if (!metodo) return;
-      const metodoTexto = metodo.trim() === "1" ? "efectivo" : metodo.trim() === "2" ? "transferencia" : null;
-      if (!metodoTexto) return alert("Opción no válida.");
-      update(ref(db, `ventas/${id}`), { estado: "pagado", metodo: metodoTexto });
-    };
-
-    // ─── Eliminar venta ───
-    window.eliminarVenta = function (id) {
-      if (confirm("¿Eliminar este registro?")) {
-        remove(ref(db, `ventas/${id}`));
-      }
-    };
-
-    // ─── Render tabla ───
-    function renderTabla() {
-      const tbody = document.getElementById("tabla-body");
-      const filtro = document.getElementById("filtro").value;
-
-      const lista = Object.entries(ventas)
-        .sort((a, b) => a[1].timestamp - b[1].timestamp);
-
-      const filtradas = filtro === "todos" ? lista
-        : lista.filter(([, v]) => v.estado === filtro);
-
-      if (filtradas.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="empty">Sin registros aún 🌭</td></tr>`;
-        return;
-      }
-
-      tbody.innerHTML = filtradas.map(([id, v]) => {
-        const estadoBadge = v.estado === "pagado"
-          ? `<span class="badge pagado">${v.metodo === "efectivo" ? "💵 Efectivo" : "📲 Transfer."}</span>`
-          : `<span class="badge pendiente">⏳ Pendiente</span>`;
-
-        const acciones = v.estado === "pendiente"
-          ? `<button class="btn-sm btn-pagar" onclick="marcarPagado('${id}')">Cobrar</button>
-             <button class="btn-sm btn-del" onclick="eliminarVenta('${id}')">✕</button>`
-          : `<button class="btn-sm btn-del" onclick="eliminarVenta('${id}')">✕</button>`;
-
-        return `
-          <tr>
-            <td class="td-nombre">${escapeHtml(v.nombre)}</td>
-            <td class="td-num">${v.cantidad}</td>
-            <td class="td-num">$${v.total.toLocaleString("es-CL")}</td>
-            <td>${estadoBadge}</td>
-            <td class="td-fecha">${formatFecha(v.timestamp)}</td>
-            <td class="td-acc">${acciones}</td>
-          </tr>`;
-      }).join("");
-    }
-
-    // ─── Actualizar resumen y barra ───
-    function actualizarResumen() {
-      const lista = Object.values(ventas);
-      totalVendidas = lista.reduce((s, v) => s + v.cantidad, 0);
-      const pendientesCount = lista.filter(v => v.estado === "pendiente").reduce((s, v) => s + v.cantidad, 0);
-      const cobradoEfectivo = lista.filter(v => v.metodo === "efectivo").reduce((s, v) => s + v.total, 0);
-      const cobradoTransfer = lista.filter(v => v.metodo === "transferencia").reduce((s, v) => s + v.total, 0);
-      const totalCobrado = cobradoEfectivo + cobradoTransfer;
-      const totalPendiente = lista.filter(v => v.estado === "pendiente").reduce((s, v) => s + v.total, 0);
-      const restantes = LIMITE_UNIDADES - totalVendidas;
-
-      // Barra progreso
-      const pct = Math.min((totalVendidas / LIMITE_UNIDADES) * 100, 100);
-      document.getElementById("barra-fill").style.width = pct + "%";
-      document.getElementById("barra-label").textContent =
-        `${totalVendidas} / ${LIMITE_UNIDADES} unidades vendidas`;
-      document.getElementById("restantes").textContent =
-        restantes > 0 ? `Quedan ${restantes} disponibles` : "¡Cupo agotado!";
-      document.getElementById("restantes").style.color = restantes <= 20 ? "var(--rojo)" : "var(--verde)";
-
-      // Tarjetas
-      setText("res-vendidas", totalVendidas);
-      setText("res-cobrado", "$" + totalCobrado.toLocaleString("es-CL"));
-      setText("res-efectivo", "$" + cobradoEfectivo.toLocaleString("es-CL"));
-      setText("res-transfer", "$" + cobradoTransfer.toLocaleString("es-CL"));
-      setText("res-pendiente", "$" + totalPendiente.toLocaleString("es-CL"));
-      setText("res-pendiente-u", pendientesCount + " u.");
-    }
-
-    // ─── Helpers ───
-    function limpiarFormulario() {
-      document.getElementById("nombre").value = "";
-      document.getElementById("cantidad").value = "";
-      document.getElementById("estado").value = "pendiente";
-      document.getElementById("metodo-grupo").style.display = "none";
-      document.getElementById("nombre").focus();
-    }
-
-    function mostrarError(msg) {
-      const el = document.getElementById("error");
-      el.textContent = msg;
-      el.style.display = "block";
-      setTimeout(() => el.style.display = "none", 3000);
-    }
-
-    function setText(id, val) {
-      const el = document.getElementById(id);
-      if (el) el.textContent = val;
-    }
-
-    function escapeHtml(str) {
-      return str.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-    }
-
-    function formatFecha(ts) {
-      const d = new Date(ts);
-      return d.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
-    }
-
-    // ─── Estado → mostrar/ocultar método de pago ───
-    document.addEventListener("DOMContentLoaded", () => {
-      document.getElementById("estado").addEventListener("change", function () {
-        document.getElementById("metodo-grupo").style.display =
-          this.value === "pagado" ? "block" : "none";
-      });
-
-      document.getElementById("filtro").addEventListener("change", () => {
-        renderTabla();
-      });
-
-      document.getElementById("cantidad").addEventListener("input", function () {
-        const c = parseInt(this.value) || 0;
-        document.getElementById("preview-total").textContent =
-          c > 0 ? `= $${(c * PRECIO_UNIDAD).toLocaleString("es-CL")}` : "";
-      });
-    });
-  </script>
+  <!-- Firebase CDN (compat — sin módulos ES, funciona con scripts normales) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
@@ -216,7 +22,6 @@ const app = initializeApp(firebaseConfig);
       --mostaza2: #c9a010;
       --verde:    #3ecf8e;
       --rojo:     #f87171;
-      --azul:     #60a5fa;
       --texto:    #e8e8f0;
       --muted:    #8888aa;
       --radius:   10px;
@@ -232,7 +37,6 @@ const app = initializeApp(firebaseConfig);
       min-height: 100vh;
     }
 
-    /* ── Header ── */
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
@@ -241,9 +45,7 @@ const app = initializeApp(firebaseConfig);
       align-items: center;
       gap: 14px;
     }
-
     .logo { font-size: 2rem; }
-
     header h1 {
       font-family: "Space Grotesk", sans-serif;
       font-size: 1.4rem;
@@ -251,10 +53,8 @@ const app = initializeApp(firebaseConfig);
       color: var(--mostaza);
       letter-spacing: -0.02em;
     }
-
     header p { color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
 
-    /* ── Layout ── */
     main {
       max-width: 1100px;
       margin: 0 auto;
@@ -263,14 +63,13 @@ const app = initializeApp(firebaseConfig);
       gap: 20px;
     }
 
-    /* ── Barra de progreso ── */
+    /* Barra progreso */
     .barra-section {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 18px 20px;
     }
-
     .barra-header {
       display: flex;
       justify-content: space-between;
@@ -278,10 +77,8 @@ const app = initializeApp(firebaseConfig);
       margin-bottom: 10px;
       font-family: "Space Grotesk", sans-serif;
     }
-
     #barra-label { font-weight: 600; font-size: 0.95rem; color: var(--mostaza); }
     #restantes   { font-size: 0.8rem; color: var(--verde); }
-
     .barra-track {
       background: var(--surface2);
       border-radius: 99px;
@@ -290,7 +87,6 @@ const app = initializeApp(firebaseConfig);
       border: 1px solid var(--border);
       position: relative;
     }
-
     .barra-fill {
       height: 100%;
       width: 0%;
@@ -299,7 +95,6 @@ const app = initializeApp(firebaseConfig);
       transition: width 0.5s ease;
       position: relative;
     }
-
     .barra-fill::after {
       content: "🌭";
       position: absolute;
@@ -309,20 +104,18 @@ const app = initializeApp(firebaseConfig);
       font-size: 14px;
     }
 
-    /* ── Tarjetas resumen ── */
+    /* Tarjetas */
     .cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 12px;
     }
-
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 16px;
     }
-
     .card-label {
       font-size: 0.7rem;
       text-transform: uppercase;
@@ -330,32 +123,23 @@ const app = initializeApp(firebaseConfig);
       color: var(--muted);
       margin-bottom: 6px;
     }
-
     .card-value {
       font-family: "Space Grotesk", sans-serif;
       font-size: 1.35rem;
       font-weight: 700;
-      color: var(--texto);
     }
-
-    .card-sub {
-      font-size: 0.75rem;
-      color: var(--muted);
-      margin-top: 3px;
-    }
-
-    .card.verde .card-value { color: var(--verde); }
-    .card.rojo  .card-value { color: var(--rojo); }
+    .card-sub { font-size: 0.75rem; color: var(--muted); margin-top: 3px; }
+    .card.verde   .card-value { color: var(--verde); }
+    .card.rojo    .card-value { color: var(--rojo); }
     .card.mostaza .card-value { color: var(--mostaza); }
 
-    /* ── Formulario ── */
+    /* Formulario */
     .form-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 20px;
     }
-
     .form-card h2 {
       font-family: "Space Grotesk", sans-serif;
       font-size: 1rem;
@@ -363,27 +147,22 @@ const app = initializeApp(firebaseConfig);
       margin-bottom: 16px;
       color: var(--mostaza);
     }
-
     .form-grid {
       display: grid;
-      grid-template-columns: 2fr 1fr 1fr 1fr;
+      grid-template-columns: 2fr 1fr 1fr auto;
       gap: 12px;
       align-items: end;
     }
-
     @media (max-width: 700px) {
       .form-grid { grid-template-columns: 1fr 1fr; }
     }
-
     .field { display: flex; flex-direction: column; gap: 5px; }
-
     label {
       font-size: 0.72rem;
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--muted);
     }
-
     input, select {
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -396,18 +175,9 @@ const app = initializeApp(firebaseConfig);
       outline: none;
       width: 100%;
     }
-
     input:focus, select:focus { border-color: var(--mostaza); }
-
-    .preview-total {
-      font-size: 0.75rem;
-      color: var(--mostaza);
-      margin-top: 4px;
-      min-height: 16px;
-    }
-
+    .preview-total { font-size: 0.75rem; color: var(--mostaza); margin-top: 4px; min-height: 16px; }
     #metodo-grupo { margin-top: 12px; max-width: 220px; }
-
     .btn-primary {
       background: var(--mostaza);
       color: #111;
@@ -421,10 +191,8 @@ const app = initializeApp(firebaseConfig);
       transition: background 0.2s, transform 0.1s;
       white-space: nowrap;
     }
-
     .btn-primary:hover  { background: var(--mostaza2); }
     .btn-primary:active { transform: scale(0.97); }
-
     #error {
       display: none;
       background: rgba(248,113,113,0.15);
@@ -436,14 +204,13 @@ const app = initializeApp(firebaseConfig);
       margin-top: 12px;
     }
 
-    /* ── Tabla ── */
+    /* Tabla */
     .tabla-section {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
     }
-
     .tabla-header {
       display: flex;
       justify-content: space-between;
@@ -451,25 +218,17 @@ const app = initializeApp(firebaseConfig);
       padding: 14px 18px;
       border-bottom: 1px solid var(--border);
     }
-
     .tabla-header h2 {
       font-family: "Space Grotesk", sans-serif;
       font-size: 1rem;
       font-weight: 600;
       color: var(--mostaza);
     }
-
     .filtro-group { display: flex; gap: 8px; align-items: center; }
     .filtro-group label { text-transform: none; letter-spacing: 0; font-size: 0.8rem; }
     .filtro-group select { width: auto; padding: 6px 10px; font-size: 0.8rem; }
-
     .tabla-wrap { overflow-x: auto; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
+    table { width: 100%; border-collapse: collapse; }
     thead th {
       background: var(--surface2);
       font-size: 0.7rem;
@@ -480,29 +239,15 @@ const app = initializeApp(firebaseConfig);
       text-align: left;
       font-weight: 500;
     }
-
-    tbody tr {
-      border-top: 1px solid var(--border);
-      transition: background 0.15s;
-    }
-
+    tbody tr { border-top: 1px solid var(--border); transition: background 0.15s; }
     tbody tr:hover { background: rgba(255,255,255,0.03); }
-
     td { padding: 10px 14px; vertical-align: middle; }
-
-    .td-num  { font-family: "Space Grotesk", sans-serif; font-weight: 600; text-align: right; }
+    .td-num   { font-family: "Space Grotesk", sans-serif; font-weight: 600; text-align: right; }
     .td-fecha { color: var(--muted); font-size: 0.8rem; }
     .td-nombre { font-weight: 500; }
     .td-acc   { text-align: right; white-space: nowrap; }
+    .empty { text-align: center; color: var(--muted); padding: 32px; font-size: 0.9rem; }
 
-    .empty {
-      text-align: center;
-      color: var(--muted);
-      padding: 32px;
-      font-size: 0.9rem;
-    }
-
-    /* ── Badges ── */
     .badge {
       display: inline-block;
       border-radius: 99px;
@@ -511,11 +256,9 @@ const app = initializeApp(firebaseConfig);
       padding: 3px 10px;
       white-space: nowrap;
     }
-
     .badge.pagado    { background: rgba(62,207,142,0.15); color: var(--verde); }
     .badge.pendiente { background: rgba(248,199,24,0.12); color: var(--mostaza); }
 
-    /* ── Botones tabla ── */
     .btn-sm {
       border: none;
       border-radius: 5px;
@@ -525,12 +268,10 @@ const app = initializeApp(firebaseConfig);
       cursor: pointer;
       transition: opacity 0.2s;
     }
-
     .btn-sm:hover { opacity: 0.8; }
-    .btn-pagar { background: var(--verde);  color: #111; margin-right: 4px; }
+    .btn-pagar { background: var(--verde); color: #111; margin-right: 4px; }
     .btn-del   { background: rgba(248,113,113,0.2); color: var(--rojo); }
 
-    /* ── Footer ── */
     footer {
       position: fixed;
       bottom: 0; left: 0; right: 0;
@@ -554,8 +295,6 @@ const app = initializeApp(firebaseConfig);
 </header>
 
 <main>
-
-  <!-- Barra de progreso -->
   <div class="barra-section">
     <div class="barra-header">
       <span id="barra-label">0 / 250 unidades vendidas</span>
@@ -566,7 +305,6 @@ const app = initializeApp(firebaseConfig);
     </div>
   </div>
 
-  <!-- Resumen -->
   <div class="cards">
     <div class="card mostaza">
       <div class="card-label">Total vendidos</div>
@@ -587,7 +325,6 @@ const app = initializeApp(firebaseConfig);
     </div>
   </div>
 
-  <!-- Formulario nueva venta -->
   <div class="form-card">
     <h2>+ Nueva venta</h2>
     <div class="form-grid">
@@ -608,11 +345,11 @@ const app = initializeApp(firebaseConfig);
         </select>
       </div>
       <div class="field">
-        <button class="btn-primary" onclick="guardarVenta()">Registrar</button>
+        <button class="btn-primary" id="btn-registrar">Registrar</button>
       </div>
     </div>
 
-    <div id="metodo-grupo" class="field" style="display:none">
+    <div id="metodo-grupo" class="field" style="display:none; margin-top:12px; max-width:220px;">
       <label for="metodo">Método de pago</label>
       <select id="metodo">
         <option value="efectivo">💵 Efectivo</option>
@@ -623,7 +360,6 @@ const app = initializeApp(firebaseConfig);
     <div id="error"></div>
   </div>
 
-  <!-- Tabla de registros -->
   <div class="tabla-section">
     <div class="tabla-header">
       <h2>Registros</h2>
@@ -654,12 +390,198 @@ const app = initializeApp(firebaseConfig);
       </table>
     </div>
   </div>
-
 </main>
 
-<footer>
-  🌭 Completos · Registro en tiempo real · Firebase Realtime Database
-</footer>
+<footer>🌭 Completos · Registro en tiempo real · Firebase Realtime Database</footer>
+
+<script>
+  // ═══════════════════════════════════════════════════════
+  // 🔧 CONFIGURACIÓN FIREBASE — reemplaza con tus datos
+  // ═══════════════════════════════════════════════════════
+  const firebaseConfig = {
+    apiKey: "AIzaSyCottmzLVhIDNcha6P2WFxFcduXtsiF8ZI",
+    authDomain: "venta-completos-30250.firebaseapp.com",
+    databaseURL: "https://venta-completos-30250-default-rtdb.firebaseio.com",
+    projectId: "venta-completos-30250",
+    storageBucket: "venta-completos-30250.firebasestorage.app",
+    messagingSenderId: "768504039199",
+    appId: "1:768504039199:web:1bae0202850e582780522a"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  const ventasRef = db.ref("ventas");
+
+  const PRECIO_UNIDAD   = 2500;
+  const LIMITE_UNIDADES = 250;
+
+  let ventas = {};
+  let totalVendidas = 0;
+
+  // ── Escuchar cambios en tiempo real ──
+  ventasRef.on("value", (snapshot) => {
+    ventas = snapshot.val() || {};
+    renderTabla();
+    actualizarResumen();
+  });
+
+  // ── Guardar venta ──
+  function guardarVenta() {
+    const nombre   = document.getElementById("nombre").value.trim();
+    const cantidad = parseInt(document.getElementById("cantidad").value);
+    const estado   = document.getElementById("estado").value;
+    const metodo   = document.getElementById("metodo").value;
+
+    if (!nombre)              return mostrarError("Ingresa el nombre del cliente.");
+    if (!cantidad || cantidad < 1) return mostrarError("Ingresa una cantidad válida.");
+    if (totalVendidas + cantidad > LIMITE_UNIDADES)
+      return mostrarError(`Solo quedan ${LIMITE_UNIDADES - totalVendidas} unidades disponibles.`);
+
+    ventasRef.push({
+      nombre,
+      cantidad,
+      total: cantidad * PRECIO_UNIDAD,
+      estado,
+      metodo: estado === "pagado" ? metodo : null,
+      timestamp: Date.now()
+    });
+
+    limpiarFormulario();
+  }
+
+  // ── Marcar como pagado ──
+  function marcarPagado(id) {
+    const opcion = prompt("¿Cómo pagó?\n1 → Efectivo\n2 → Transferencia");
+    if (!opcion) return;
+    const metodoTexto = opcion.trim() === "1" ? "efectivo"
+                      : opcion.trim() === "2" ? "transferencia" : null;
+    if (!metodoTexto) return alert("Opción no válida. Ingresa 1 o 2.");
+    db.ref("ventas/" + id).update({ estado: "pagado", metodo: metodoTexto });
+  }
+
+  // ── Eliminar venta ──
+  function eliminarVenta(id) {
+    if (confirm("¿Eliminar este registro?")) {
+      db.ref("ventas/" + id).remove();
+    }
+  }
+
+  // ── Render tabla ──
+  function renderTabla() {
+    const tbody  = document.getElementById("tabla-body");
+    const filtro = document.getElementById("filtro").value;
+
+    const lista = Object.entries(ventas)
+      .sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+    const filtradas = filtro === "todos" ? lista
+      : lista.filter(([, v]) => v.estado === filtro);
+
+    if (filtradas.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">Sin registros aún 🌭</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = filtradas.map(([id, v]) => {
+      const badge = v.estado === "pagado"
+        ? '<span class="badge pagado">' + (v.metodo === "efectivo" ? "💵 Efectivo" : "📲 Transfer.") + '</span>'
+        : '<span class="badge pendiente">⏳ Pendiente</span>';
+
+      const acciones = v.estado === "pendiente"
+        ? '<button class="btn-sm btn-pagar" onclick="marcarPagado(\'' + id + '\')">Cobrar</button>'
+          + '<button class="btn-sm btn-del" onclick="eliminarVenta(\'' + id + '\')">✕</button>'
+        : '<button class="btn-sm btn-del" onclick="eliminarVenta(\'' + id + '\')">✕</button>';
+
+      return '<tr>'
+        + '<td class="td-nombre">' + escapeHtml(v.nombre) + '</td>'
+        + '<td class="td-num">' + v.cantidad + '</td>'
+        + '<td class="td-num">$' + v.total.toLocaleString("es-CL") + '</td>'
+        + '<td>' + badge + '</td>'
+        + '<td class="td-fecha">' + formatFecha(v.timestamp) + '</td>'
+        + '<td class="td-acc">' + acciones + '</td>'
+        + '</tr>';
+    }).join("");
+  }
+
+  // ── Actualizar resumen ──
+  function actualizarResumen() {
+    const lista = Object.values(ventas);
+    totalVendidas = lista.reduce((s, v) => s + v.cantidad, 0);
+
+    const pendientesUnits  = lista.filter(v => v.estado === "pendiente").reduce((s, v) => s + v.cantidad, 0);
+    const cobradoEfectivo  = lista.filter(v => v.metodo === "efectivo").reduce((s, v) => s + v.total, 0);
+    const cobradoTransfer  = lista.filter(v => v.metodo === "transferencia").reduce((s, v) => s + v.total, 0);
+    const totalCobrado     = cobradoEfectivo + cobradoTransfer;
+    const totalPendiente   = lista.filter(v => v.estado === "pendiente").reduce((s, v) => s + v.total, 0);
+    const restantes        = LIMITE_UNIDADES - totalVendidas;
+
+    const pct = Math.min((totalVendidas / LIMITE_UNIDADES) * 100, 100);
+    document.getElementById("barra-fill").style.width = pct + "%";
+    document.getElementById("barra-label").textContent = totalVendidas + " / " + LIMITE_UNIDADES + " unidades vendidas";
+    const restEl = document.getElementById("restantes");
+    restEl.textContent = restantes > 0 ? "Quedan " + restantes + " disponibles" : "¡Cupo agotado!";
+    restEl.style.color = restantes <= 20 ? "var(--rojo)" : "var(--verde)";
+
+    setText("res-vendidas",   totalVendidas);
+    setText("res-cobrado",    "$" + totalCobrado.toLocaleString("es-CL"));
+    setText("res-efectivo",   "$" + cobradoEfectivo.toLocaleString("es-CL"));
+    setText("res-transfer",   "$" + cobradoTransfer.toLocaleString("es-CL"));
+    setText("res-pendiente",  "$" + totalPendiente.toLocaleString("es-CL"));
+    setText("res-pendiente-u", pendientesUnits + " u.");
+  }
+
+  // ── Helpers ──
+  function limpiarFormulario() {
+    document.getElementById("nombre").value   = "";
+    document.getElementById("cantidad").value = "";
+    document.getElementById("estado").value   = "pendiente";
+    document.getElementById("metodo-grupo").style.display = "none";
+    document.getElementById("preview-total").textContent  = "";
+    document.getElementById("nombre").focus();
+  }
+
+  function mostrarError(msg) {
+    const el = document.getElementById("error");
+    el.textContent = msg;
+    el.style.display = "block";
+    setTimeout(() => { el.style.display = "none"; }, 3000);
+  }
+
+  function setText(id, val) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, function(c) {
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function formatFecha(ts) {
+    return new Date(ts).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // ── Listeners del formulario ──
+  document.getElementById("btn-registrar").addEventListener("click", guardarVenta);
+
+  document.getElementById("nombre").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") guardarVenta();
+  });
+
+  document.getElementById("estado").addEventListener("change", function() {
+    document.getElementById("metodo-grupo").style.display =
+      this.value === "pagado" ? "block" : "none";
+  });
+
+  document.getElementById("filtro").addEventListener("change", renderTabla);
+
+  document.getElementById("cantidad").addEventListener("input", function() {
+    var c = parseInt(this.value) || 0;
+    document.getElementById("preview-total").textContent =
+      c > 0 ? "= $" + (c * PRECIO_UNIDAD).toLocaleString("es-CL") : "";
+  });
+</script>
 
 </body>
 </html>
